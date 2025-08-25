@@ -1,0 +1,29 @@
+# 存储配置示例文件
+
+# 存储模式: local, oss, minio
+mode: local
+assign_mode: local
+
+# 最大文件大小限制（字节）
+max_size: 104857600  # 100MB
+
+# 本地存储配置
+local:
+  base_path: /tmp/storage
+
+# OSS存储配置
+oss:
+  endpoint: your-oss-endpoint
+  access_key_id: your-access-key-id
+  access_key_secret: your-access-key-secret
+  bucket: your-bucket-name
+  base_dir: your-base-directory
+
+# MinIO存储配置
+minio:
+  endpoint: your-minio-endpoint
+  access_key_id: your-access-key-id
+  access_key_secret: your-access-key-secret
+  use_ssl: false
+  bucket: your-bucket-name
+  base_dir: your-base-directory
