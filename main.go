@@ -163,8 +163,8 @@ func downloadFile(ctx context.Context, s Storage, srcPath, dstPath string) {
 	}
 
 	// 创建目标目录
-	dir := filepath.Dir(dstPath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	tmpdir := filepath.Dir(dstPath)
+	if err = os.MkdirAll(tmpdir, 0755); err != nil {
 		fmt.Printf("Failed to create directory: %v\n", err)
 		os.Exit(1)
 	}
