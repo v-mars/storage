@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/v-mars/storage"
 	"io"
 	"os"
 	"path/filepath"
@@ -47,24 +48,24 @@ func main() {
 	}
 
 	// 初始化存储配置
-	storageConfig := &Types{}
+	storageConfig := &storage.Types{}
 
 	// 根据存储类型设置配置
-	switch StorageType(*storageType) {
-	case Local:
-		storageConfig.Local = LocalStorageConfig{
+	switch storage.StorageType(*storageType) {
+	case storage.Local:
+		storageConfig.Local = storage.LocalStorageConfig{
 			BasePath: *localBasePath,
 		}
-	case OSS:
-		storageConfig.Oss = OSSStorageConfig{
+	case storage.OSS:
+		storageConfig.Oss = storage.OSSStorageConfig{
 			Endpoint:        *ossEndpoint,
 			AccessKeyID:     *ossAccessKeyID,
 			AccessKeySecret: *ossAccessKeySecret,
 			Bucket:          *ossBucket,
 			BaseDir:         *ossBaseDir,
 		}
-	case MinIO:
-		storageConfig.Minio = MinIOStorageConfig{
+	case storage.MinIO:
+		storageConfig.Minio = storage.MinIOStorageConfig{
 			Endpoint:        *minioEndpoint,
 			AccessKeyID:     *minioAccessKeyID,
 			AccessKeySecret: *minioAccessKeySecret,
@@ -73,7 +74,7 @@ func main() {
 			BaseDir:         *minioBaseDir,
 		}
 	default:
-		storageConfig.Local = LocalStorageConfig{
+		storageConfig.Local = storage.LocalStorageConfig{
 			BasePath: *localBasePath,
 		}
 	}
@@ -81,7 +82,7 @@ func main() {
 	// 获取存储实例
 	basePath, storageInstance := storageConfig.GetStorage(
 		context.Background(),
-		WithMode(StorageType(*storageType)),
+		storage.WithMode(storage.StorageType(*storageType)),
 	)
 
 	if storageInstance == nil {
@@ -138,7 +139,7 @@ func main() {
 	}
 }
 
-func uploadFile(ctx context.Context, s Storage, srcPath, dstPath string) {
+func uploadFile(ctx context.Context, s storage.Storage, srcPath, dstPath string) {
 	file, err := os.Open(srcPath)
 	if err != nil {
 		fmt.Printf("Failed to open source file: %v\n", err)
@@ -155,7 +156,7 @@ func uploadFile(ctx context.Context, s Storage, srcPath, dstPath string) {
 	fmt.Printf("Successfully uploaded %s to %s\n", srcPath, dstPath)
 }
 
-func downloadFile(ctx context.Context, s Storage, srcPath, dstPath string) {
+func downloadFile(ctx context.Context, s storage.Storage, srcPath, dstPath string) {
 	reader, err := s.Download(ctx, srcPath)
 	if err != nil {
 		fmt.Printf("Failed to download file: %v\n", err)
@@ -187,7 +188,7 @@ func downloadFile(ctx context.Context, s Storage, srcPath, dstPath string) {
 	fmt.Printf("Successfully downloaded %s to %s\n", srcPath, dstPath)
 }
 
-func deleteFile(ctx context.Context, s Storage, filePath string) {
+func deleteFile(ctx context.Context, s storage.Storage, filePath string) {
 	err := s.Delete(ctx, filePath)
 	if err != nil {
 		fmt.Printf("Failed to delete file: %v\n", err)
@@ -197,7 +198,7 @@ func deleteFile(ctx context.Context, s Storage, filePath string) {
 	fmt.Printf("Successfully deleted %s\n", filePath)
 }
 
-func listDir(ctx context.Context, s Storage, dirPath string) {
+func listDir(ctx context.Context, s storage.Storage, dirPath string) {
 	files, err := s.ListDir(ctx, dirPath)
 	if err != nil {
 		fmt.Printf("Failed to list directory: %v\n", err)
@@ -214,7 +215,7 @@ func listDir(ctx context.Context, s Storage, dirPath string) {
 	}
 }
 
-func createDir(ctx context.Context, s Storage, dirPath string) {
+func createDir(ctx context.Context, s storage.Storage, dirPath string) {
 	err := s.CreateDir(ctx, dirPath)
 	if err != nil {
 		fmt.Printf("Failed to create directory: %v\n", err)
@@ -224,7 +225,7 @@ func createDir(ctx context.Context, s Storage, dirPath string) {
 	fmt.Printf("Successfully created directory %s\n", dirPath)
 }
 
-func deleteDir(ctx context.Context, s Storage, dirPath string) {
+func deleteDir(ctx context.Context, s storage.Storage, dirPath string) {
 	err := s.DeleteDir(ctx, dirPath)
 	if err != nil {
 		fmt.Printf("Failed to delete directory: %v\n", err)
@@ -234,7 +235,7 @@ func deleteDir(ctx context.Context, s Storage, dirPath string) {
 	fmt.Printf("Successfully deleted directory %s\n", dirPath)
 }
 
-func renameFile(ctx context.Context, s Storage, srcPath, dstPath string) {
+func renameFile(ctx context.Context, s storage.Storage, srcPath, dstPath string) {
 	err := s.Rename(ctx, srcPath, dstPath)
 	if err != nil {
 		fmt.Printf("Failed to rename file: %v\n", err)
