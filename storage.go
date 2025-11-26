@@ -1274,7 +1274,7 @@ func (s *MinIOStorage) Delete(ctx context.Context, filePath string) error {
 	fullKey := filepath.Join(s.config.BaseDir, filePath)
 
 	// 删除文件
-	err := s.client.RemoveObject(ctx, s.config.Bucket, fullKey, minio.RemoveObjectOptions{})
+	err := s.client.RemoveObject(ctx, s.config.Bucket, fullKey, minio.RemoveObjectOptions{ForceDelete: true})
 	if err != nil {
 		hlog.CtxErrorf(ctx, "MinIO删除文件失败: %v", err)
 		return err
