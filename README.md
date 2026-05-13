@@ -13,6 +13,8 @@
 - 支持元数据管理
 - 支持批量操作
 - 支持断点续传下载
+- **支持设置文件上传有效期（OSS和MinIO）**
+- **组件化设计，代码结构清晰**
 
 ## 安装
 
@@ -49,9 +51,14 @@ basePath, storageInstance := storageConfig.GetStorage(
 ### 基本文件操作
 
 ```go
-// 上传文件
+// 上传文件（不设置有效期）
 file, _ := os.Open("example.txt")
 err := storageInstance.Upload(context.Background(), "path/to/file.txt", file)
+
+// 上传文件并设置7天有效期（仅OSS和MinIO支持）
+import "time"
+file, _ = os.Open("example.txt")
+err = storageInstance.Upload(context.Background(), "path/to/file.txt", file, storage.WithExpiration(7*24*time.Hour))
 
 // 下载文件
 reader, err := storageInstance.Download(context.Background(), "path/to/file.txt")
@@ -102,12 +109,15 @@ err := storageInstance.UpdateMetadata(context.Background(), "path/to/file.txt", 
 ### 批量操作
 
 ```go
-// 批量上传
+// 批量上传（不设置有效期）
 files := map[string]io.Reader{
     "file1.txt": reader1,
     "file2.txt": reader2,
 }
 err := storageInstance.BatchUpload(context.Background(), files)
+
+// 批量上传并设置30天有效期（仅OSS和MinIO支持）
+err = storageInstance.BatchUpload(context.Background(), files, storage.WithExpiration(30*24*time.Hour))
 
 // 批量下载
 filePaths := []string{"file1.txt", "file2.txt"}
@@ -150,14 +160,67 @@ reader, err := storageInstance.DownloadRange(context.Background(), "path/to/file
 - Bucket: 存储桶名称
 - BaseDir: 基础目录
 
+## 项目结构
+
+项目采用组件化设计，所有文件都在同一级目录下：
+
+```
+storage/
+├── types.go              # 类型定义和Storage接口
+├── options.go            # 上传选项（有效期等）
+├── factory.go            # 存储工厂和配置管理
+├── local_storage.go      # 本地存储实现
+├── oss_storage.go        # OSS存储实现
+├── minio_storage.go      # MinIO存储实现
+├── storage_test.go       # 单元测试
+└── example_usage.go      # 使用示例
+```
+
+这种设计使得代码结构清晰，易于维护和扩展。
+
+## 上传有效期功能
+
+OSS和MinIO存储支持在上传文件时设置有效期。使用可变参数实现，完全向后兼容。
+
+### 使用方法
+
+```go
+import (
+    "time"
+    "github.com/v-mars/storage"
+)
+
+// 方式1: 不设置有效期（默认行为，向后兼容）
+err := storageInstance.Upload(ctx, "file.txt", reader)
+
+// 方式2: 设置1小时有效期
+err = storageInstance.Upload(ctx, "file.txt", reader, storage.WithExpiration(1*time.Hour))
+
+// 方式3: 设置7天有效期
+err = storageInstance.Upload(ctx, "file.txt", reader, storage.WithExpiration(7*24*time.Hour))
+
+// 方式4: 设置30天有效期
+err = storageInstance.Upload(ctx, "file.txt", reader, storage.WithExpiration(30*24*time.Hour))
+
+// 批量上传也可以设置有效期
+err = storageInstance.BatchUpload(ctx, files, storage.WithExpiration(24*time.Hour))
+```
+
+### 注意事项
+
+- **本地存储不支持有效期设置**，传入的有效期选项会被忽略
+- OSS和MinIO会在上传时自动设置文件的过期时间
+- 过期后的文件会被存储服务提供商自动删除
+- 该功能完全向后兼容，不传有效期参数时保持原有行为
+
 ## 接口定义
 
-所有存储后端都实现了统一的[Storage](file:///Users/zhangdonghai/work/dev/go/storage/storage.go#L39-L53)接口：
+所有存储后端都实现了统一的Storage接口：
 
 ```go
 type Storage interface {
     // 基础操作
-    Upload(ctx context.Context, filePath string, reader io.Reader) error
+    Upload(ctx context.Context, filePath string, reader io.Reader, opts ...UploadOption) error
     Download(ctx context.Context, filePath string) (io.Reader, error)
     DownloadRange(ctx context.Context, filePath string, offset, size int64) (io.Reader, error)
     Delete(ctx context.Context, filePath string) error
@@ -175,7 +238,7 @@ type Storage interface {
     UpdateMetadata(ctx context.Context, filePath string, metadata *FileMetadata) error
 
     // 批量操作
-    BatchUpload(ctx context.Context, files map[string]io.Reader) error
+    BatchUpload(ctx context.Context, files map[string]io.Reader, opts ...UploadOption) error
     BatchDownload(ctx context.Context, filePaths []string) (map[string]io.Reader, error)
     BatchDelete(ctx context.Context, filePaths []string) error
 }
