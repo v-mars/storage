@@ -1,6 +1,6 @@
 # 存储配置示例文件
 
-# 存储模式: local, oss, minio
+# 存储模式: local, s3, oss, minio
 mode: local
 assign_mode: local
 
@@ -27,3 +27,13 @@ minio:
   use_ssl: false
   bucket: your-bucket-name
   base_dir: your-base-directory
+
+# S3存储配置
+s3:
+  endpoint: https://s3.amazonaws.com
+  access_key_id: your-s3-access-key-id
+  access_key_secret: your-s3-access-key-secret
+  region: us-east-1
+  use_ssl: true
+  bucket: your-s3-bucket
+  base_dir: your-s3-base-directory

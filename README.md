@@ -1,6 +1,6 @@
 # Storage
 
-一个支持多种存储后端的统一存储接口，包括本地存储、阿里云OSS和MinIO。该项目提供了一套统一的API来操作不同的存储系统，使应用程序可以轻松切换存储后端而无需修改业务逻辑。
+一个支持多种存储后端的统一存储接口，包括本地存储、阿里云OSS、MinIO和标准S3。该项目提供了一套统一的API来操作不同的存储系统，使应用程序可以轻松切换存储后端而无需修改业务逻辑。
 
 ## 功能特性
 
@@ -8,12 +8,13 @@
 - 支持本地文件系统存储
 - 支持阿里云OSS存储
 - 支持MinIO对象存储
+- **支持标准S3协议（AWS S3及兼容S3的服务）**
 - 支持文件上传、下载、删除、重命名、移动、复制等操作
 - 支持目录操作（创建、删除、列表）
 - 支持元数据管理
 - 支持批量操作
 - 支持断点续传下载
-- **支持设置文件上传有效期（OSS和MinIO）**
+- **支持设置文件上传有效期（OSS、MinIO和S3）**
 - **组件化设计，代码结构清晰**
 
 ## 安装
@@ -37,11 +38,12 @@ basePath, storageInstance := storageConfig.GetStorage(context.Background())
 storageConfig := &storage.Types{}
 basePath, storageInstance := storageConfig.GetStorage(
     context.Background(),
-    storage.WithMode(storage.OSS), // 或 storage.MinIO, storage.Local
-    storage.WithOSSConfig(storage.OSSStorageConfig{
-        Endpoint:        "your-endpoint",
+    storage.WithMode(storage.S3), // 或 storage.OSS, storage.MinIO, storage.Local
+    storage.WithS3Config(storage.S3StorageConfig{
+        Endpoint:        "https://s3.amazonaws.com",
         AccessKeyID:     "your-access-key-id",
         AccessKeySecret: "your-access-key-secret",
+        Region:          "us-east-1",
         Bucket:          "your-bucket",
         BaseDir:         "your-base-directory",
     }),
@@ -55,7 +57,7 @@ basePath, storageInstance := storageConfig.GetStorage(
 file, _ := os.Open("example.txt")
 err := storageInstance.Upload(context.Background(), "path/to/file.txt", file)
 
-// 上传文件并设置7天有效期（仅OSS和MinIO支持）
+// 上传文件并设置7天有效期（仅OSS、MinIO和S3支持）
 import "time"
 file, _ = os.Open("example.txt")
 err = storageInstance.Upload(context.Background(), "path/to/file.txt", file, storage.WithExpiration(7*24*time.Hour))
@@ -116,7 +118,7 @@ files := map[string]io.Reader{
 }
 err := storageInstance.BatchUpload(context.Background(), files)
 
-// 批量上传并设置30天有效期（仅OSS和MinIO支持）
+// 批量上传并设置30天有效期（仅OSS、MinIO和S3支持）
 err = storageInstance.BatchUpload(context.Background(), files, storage.WithExpiration(30*24*time.Hour))
 
 // 批量下载
@@ -160,6 +162,25 @@ reader, err := storageInstance.DownloadRange(context.Background(), "path/to/file
 - Bucket: 存储桶名称
 - BaseDir: 基础目录
 
+### 标准S3
+
+将文件存储在AWS S3或兼容S3协议的对象存储服务中。需要配置：
+- Endpoint: S3服务地址（如 https://s3.amazonaws.com）
+- AccessKeyID: 访问密钥ID
+- AccessKeySecret: 访问密钥密钥
+- Region: AWS区域（如 us-east-1, cn-north-1）
+- UseSSL: 是否使用SSL连接
+- Bucket: 存储桶名称
+- BaseDir: 基础目录
+
+**支持的S3兼容服务：**
+- AWS S3
+- MinIO
+- DigitalOcean Spaces
+- Wasabi
+- Backblaze B2
+- 其他兼容S3 API的服务
+
 ## 项目结构
 
 项目采用组件化设计，所有文件都在同一级目录下：
@@ -172,6 +193,7 @@ storage/
 ├── local_storage.go      # 本地存储实现
 ├── oss_storage.go        # OSS存储实现
 ├── minio_storage.go      # MinIO存储实现
+├── s3_storage.go         # S3存储实现
 ├── storage_test.go       # 单元测试
 └── example_usage.go      # 使用示例
 ```
@@ -209,7 +231,7 @@ err = storageInstance.BatchUpload(ctx, files, storage.WithExpiration(24*time.Hou
 ### 注意事项
 
 - **本地存储不支持有效期设置**，传入的有效期选项会被忽略
-- OSS和MinIO会在上传时自动设置文件的过期时间
+- OSS、MinIO和S3会在上传时自动设置文件的过期时间
 - 过期后的文件会被存储服务提供商自动删除
 - 该功能完全向后兼容，不传有效期参数时保持原有行为
 
@@ -322,6 +344,22 @@ storage-cli \
   -minio.accesskeysecret=your-access-key-secret \
   -minio.bucket=your-bucket \
   -minio.basedir=your-base-dir \
+  -action=upload \
+  -src=/path/to/local/file.txt \
+  -dst=file.txt
+```
+
+### 使用S3存储
+
+```bash
+storage-cli \
+  -type=s3 \
+  -s3.endpoint=https://s3.amazonaws.com \
+  -s3.accesskeyid=your-s3-access-key-id \
+  -s3.accesskeysecret=your-s3-access-key-secret \
+  -s3.region=us-east-1 \
+  -s3.bucket=your-s3-bucket \
+  -s3.basedir=your-s3-base-dir \
   -action=upload \
   -src=/path/to/local/file.txt \
   -dst=file.txt

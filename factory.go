@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+
 	"github.com/cloudwego/hertz/pkg/common/hlog"
 )
 
@@ -12,6 +13,7 @@ type Types struct {
 	Local      LocalStorageConfig `json:"local"`
 	Minio      MinIOStorageConfig `json:"minio"`
 	Oss        OSSStorageConfig   `json:"oss"`
+	S3         S3StorageConfig    `json:"s3"`
 }
 
 // StorageOption 定义存储选项函数类型
@@ -38,6 +40,14 @@ func WithOSSConfig(config OSSStorageConfig) StorageOption {
 	return func(s *Types) {
 		s.Oss = config
 		s.Mode = OSS
+	}
+}
+
+// WithS3Config 设置S3存储配置选项
+func WithS3Config(config S3StorageConfig) StorageOption {
+	return func(s *Types) {
+		s.S3 = config
+		s.Mode = S3
 	}
 }
 
@@ -89,6 +99,14 @@ func (s *Types) GetStorage(ctx context.Context, opts ...StorageOption) (string, 
 
 	// 根据模式返回相应的存储实例
 	switch s.AssignMode {
+	case S3:
+		// 验证S3配置
+		if s.S3.BaseDir == "" || s.S3.Endpoint == "" || s.S3.AccessKeyID == "" || s.S3.AccessKeySecret == "" || s.S3.Bucket == "" || s.S3.Region == "" {
+			hlog.CtxErrorf(ctx, "S3 config error: missing required fields")
+			return "", nil
+		}
+		hlog.CtxInfof(ctx, "Using S3 storage")
+		return s.S3.BaseDir, NewS3Storage(s.S3)
 	case MinIO:
 		// 验证MinIO配置
 		if s.Minio.BaseDir == "" || s.Minio.Endpoint == "" || s.Minio.AccessKeyID == "" || s.Minio.AccessKeySecret == "" || s.Minio.Bucket == "" {
@@ -167,6 +185,20 @@ func init() {
 	//		UseSSL:          false,
 	//		Bucket:          "your-minio-bucket",
 	//		BaseDir:         "your-minio-base-dir",
+	//	})
+	//})
+
+	// 注册S3存储驱动（示例配置）
+	//RegisterStorageDriver(S3, func() Storage {
+	//	// 实际使用时应从安全的配置源获取
+	//	return NewS3Storage(S3StorageConfig{
+	//		Endpoint:        "https://s3.amazonaws.com",
+	//		AccessKeyID:     "your-s3-access-key-id",
+	//		AccessKeySecret: "your-s3-access-key-secret",
+	//		Region:          "us-east-1",
+	//		UseSSL:          true,
+	//		Bucket:          "your-s3-bucket",
+	//		BaseDir:         "your-s3-base-dir",
 	//	})
 	//})
 }

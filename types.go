@@ -13,6 +13,7 @@ const (
 	Local StorageType = "local" // 本地存储类型
 	OSS   StorageType = "oss"   // 阿里云OSS存储类型
 	MinIO StorageType = "minio" // MinIO存储类型
+	S3    StorageType = "s3"    // 标准S3存储类型
 )
 
 // FileMetadata 文件元数据
