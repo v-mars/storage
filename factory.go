@@ -94,7 +94,10 @@ func (s *Types) GetStorage(ctx context.Context, opts ...StorageOption) (string, 
 		s.AssignMode = s.Mode
 	} else if s.AssignMode == "" && s.Mode == "" {
 		// 使用默认配置
-		opts = DefaultStorageOptions()
+		for _, opt := range DefaultStorageOptions() {
+			opt(s)
+		}
+		s.AssignMode = s.Mode
 	}
 
 	// 根据模式返回相应的存储实例

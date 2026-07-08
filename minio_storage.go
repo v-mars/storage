@@ -3,13 +3,14 @@ package storage
 import (
 	"context"
 	"fmt"
-	"github.com/cloudwego/hertz/pkg/common/hlog"
-	"github.com/minio/minio-go/v7"
-	"github.com/minio/minio-go/v7/pkg/credentials"
 	"io"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/cloudwego/hertz/pkg/common/hlog"
+	"github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
 )
 
 // MinIOStorageConfig MinIO 存储配置
@@ -211,6 +212,20 @@ func (s *MinIOStorage) Copy(ctx context.Context, srcPath string, dstPath string)
 	return nil
 }
 
+// Exists 实现检查MinIO文件是否存在
+func (s *MinIOStorage) Exists(ctx context.Context, filePath string) (bool, error) {
+	fullKey := filepath.Join(s.config.BaseDir, filePath)
+	_, err := s.client.StatObject(ctx, s.config.Bucket, fullKey, minio.StatObjectOptions{})
+	if err != nil {
+		errResp := minio.ToErrorResponse(err)
+		if errResp.Code == "NoSuchKey" {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
 // CreateDir 实现MinIO目录创建（通过创建以/结尾的对象模拟目录）
 func (s *MinIOStorage) CreateDir(ctx context.Context, dirPath string) error {
 	hlog.CtxInfof(ctx, "开始在MinIO中创建目录: %s", dirPath)
@@ -242,15 +257,15 @@ func (s *MinIOStorage) DeleteDir(ctx context.Context, dirPath string) error {
 	dirPath = ensureOSSDirPath(dirPath)
 	fullKey := filepath.Join(s.config.BaseDir, dirPath)
 
-	// 列出目录下的所有对象
+	// 列出目录下的所有对象并删除（直接使用底层client，避免key重复拼接baseDir）
 	for object := range s.client.ListObjects(ctx, s.config.Bucket, minio.ListObjectsOptions{Prefix: fullKey, Recursive: true}) {
 		if object.Err != nil {
 			hlog.CtxErrorf(ctx, "列出MinIO目录内容失败: %v", object.Err)
 			return object.Err
 		}
 
-		// 删除每个对象
-		if err := s.Delete(ctx, object.Key); err != nil {
+		// 直接调用底层API，object.Key已经是完整路径
+		if err := s.client.RemoveObject(ctx, s.config.Bucket, object.Key, minio.RemoveObjectOptions{ForceDelete: true}); err != nil {
 			hlog.CtxErrorf(ctx, "删除MinIO对象失败: %v", err)
 			return err
 		}
@@ -327,54 +342,17 @@ func (s *MinIOStorage) UpdateMetadata(ctx context.Context, filePath string, meta
 // BatchUpload 实现MinIO批量上传
 func (s *MinIOStorage) BatchUpload(ctx context.Context, files map[string]io.Reader, opts ...UploadOption) error {
 	hlog.CtxInfof(ctx, "开始批量上传 %d 个文件到MinIO", len(files))
-
-	for filePath, reader := range files {
-		if err := s.Upload(ctx, filePath, reader, opts...); err != nil {
-			hlog.CtxErrorf(ctx, "批量上传失败，文件: %s, 错误: %v", filePath, err)
-			return err
-		}
-	}
-
-	hlog.CtxInfof(ctx, "成功完成MinIO批量上传，共 %d 个文件", len(files))
-	return nil
+	return BatchUploadHelper(ctx, s, files, opts...)
 }
 
 // BatchDownload 实现MinIO批量下载（流式下载）
 func (s *MinIOStorage) BatchDownload(ctx context.Context, filePaths []string) (map[string]io.Reader, error) {
 	hlog.CtxInfof(ctx, "开始批量下载 %d 个MinIO文件", len(filePaths))
-
-	results := make(map[string]io.Reader)
-
-	for _, filePath := range filePaths {
-		reader, err := s.Download(ctx, filePath)
-		if err != nil {
-			hlog.CtxErrorf(ctx, "MinIO批量下载失败，文件: %s, 错误: %v", filePath, err)
-			// 关闭已打开的reader
-			for _, r := range results {
-				if closer, ok := r.(io.Closer); ok {
-					closer.Close()
-				}
-			}
-			return nil, err
-		}
-		results[filePath] = reader
-	}
-
-	hlog.CtxInfof(ctx, "成功完成MinIO批量下载，共 %d 个文件", len(filePaths))
-	return results, nil
+	return BatchDownloadHelper(ctx, s, filePaths)
 }
 
 // BatchDelete 实现MinIO批量删除
 func (s *MinIOStorage) BatchDelete(ctx context.Context, filePaths []string) error {
 	hlog.CtxInfof(ctx, "开始批量删除 %d 个MinIO文件", len(filePaths))
-
-	for _, filePath := range filePaths {
-		if err := s.Delete(ctx, filePath); err != nil {
-			hlog.CtxErrorf(ctx, "批量删除失败，文件: %s, 错误: %v", filePath, err)
-			return err
-		}
-	}
-
-	hlog.CtxInfof(ctx, "成功完成MinIO批量删除，共 %d 个文件", len(filePaths))
-	return nil
+	return BatchDeleteHelper(ctx, s, filePaths)
 }

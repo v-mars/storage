@@ -2,10 +2,11 @@ package storage
 
 import (
 	"context"
-	"github.com/cloudwego/hertz/pkg/common/hlog"
 	"io"
 	"os"
 	"path/filepath"
+
+	"github.com/cloudwego/hertz/pkg/common/hlog"
 )
 
 // LocalStorageConfig 本地存储配置
@@ -155,6 +156,12 @@ func (s *LocalStorage) Rename(ctx context.Context, oldPath string, newPath strin
 	oldFullPath := filepath.Join(s.config.BasePath, oldPath)
 	newFullPath := filepath.Join(s.config.BasePath, newPath)
 
+	// 确保目标目录存在
+	if err := os.MkdirAll(filepath.Dir(newFullPath), os.ModePerm); err != nil {
+		hlog.CtxErrorf(ctx, "创建目标目录失败: %v", err)
+		return err
+	}
+
 	err := os.Rename(oldFullPath, newFullPath)
 	if err != nil {
 		hlog.CtxErrorf(ctx, "文件重命名失败: %v", err)
@@ -178,6 +185,12 @@ func (s *LocalStorage) Copy(ctx context.Context, srcPath string, dstPath string)
 	srcFullPath := filepath.Join(s.config.BasePath, srcPath)
 	dstFullPath := filepath.Join(s.config.BasePath, dstPath)
 
+	// 确保目标目录存在
+	if err := os.MkdirAll(filepath.Dir(dstFullPath), os.ModePerm); err != nil {
+		hlog.CtxErrorf(ctx, "创建目标目录失败: %v", err)
+		return err
+	}
+
 	srcFile, err := os.Open(srcFullPath)
 	if err != nil {
 		hlog.CtxErrorf(ctx, "打开源文件失败: %v", err)
@@ -200,6 +213,19 @@ func (s *LocalStorage) Copy(ctx context.Context, srcPath string, dstPath string)
 
 	hlog.CtxInfof(ctx, "文件复制成功: %s -> %s", srcPath, dstPath)
 	return nil
+}
+
+// Exists 实现检查本地文件是否存在
+func (s *LocalStorage) Exists(ctx context.Context, filePath string) (bool, error) {
+	fullPath := filepath.Join(s.config.BasePath, filePath)
+	_, err := os.Stat(fullPath)
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, err
 }
 
 // CreateDir 实现本地目录创建
@@ -234,37 +260,35 @@ func (s *LocalStorage) DeleteDir(ctx context.Context, dirPath string) error {
 	return nil
 }
 
-// ListDir 实现本地目录列表
+// ListDir 实现本地目录列表（仅列出当前层级，不递归）
 func (s *LocalStorage) ListDir(ctx context.Context, dirPath string) ([]FileMetadata, error) {
 	hlog.CtxInfof(ctx, "开始列出本地目录内容: %s", dirPath)
 
 	fullPath := filepath.Join(s.config.BasePath, dirPath)
 
-	files := make([]FileMetadata, 0)
-
-	err := filepath.Walk(fullPath, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-
-		relPath, _ := filepath.Rel(s.config.BasePath, path)
-		metadata := FileMetadata{
-			Name:     relPath,
-			Size:     info.Size(),
-			ModTime:  info.ModTime(),
-			IsDir:    info.IsDir(),
-			MIMEType: "application/octet-stream", // 简化处理，实际应根据文件类型判断
-		}
-		files = append(files, metadata)
-		return nil
-	})
-
+	entries, err := os.ReadDir(fullPath)
 	if err != nil {
 		hlog.CtxErrorf(ctx, "列出目录内容失败: %v", err)
 		return nil, err
 	}
 
-	hlog.CtxInfof(ctx, "成功列出目录内容: %s, 共找到 %d 个文件", dirPath, len(files))
+	files := make([]FileMetadata, 0, len(entries))
+	for _, entry := range entries {
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		metadata := FileMetadata{
+			Name:     entry.Name(),
+			Size:     info.Size(),
+			ModTime:  info.ModTime(),
+			IsDir:    entry.IsDir(),
+			MIMEType: "application/octet-stream",
+		}
+		files = append(files, metadata)
+	}
+
+	hlog.CtxInfof(ctx, "成功列出目录内容: %s, 共找到 %d 个条目", dirPath, len(files))
 	return files, nil
 }
 
@@ -314,54 +338,17 @@ func (s *LocalStorage) UpdateMetadata(ctx context.Context, filePath string, meta
 // BatchUpload 实现批量上传
 func (s *LocalStorage) BatchUpload(ctx context.Context, files map[string]io.Reader, opts ...UploadOption) error {
 	hlog.CtxInfof(ctx, "开始批量上传 %d 个文件", len(files))
-
-	for filePath, reader := range files {
-		if err := s.Upload(ctx, filePath, reader, opts...); err != nil {
-			hlog.CtxErrorf(ctx, "批量上传失败，文件: %s, 错误: %v", filePath, err)
-			return err
-		}
-	}
-
-	hlog.CtxInfof(ctx, "成功完成批量上传，共 %d 个文件", len(files))
-	return nil
+	return BatchUploadHelper(ctx, s, files, opts...)
 }
 
 // BatchDownload 实现本地批量下载（流式下载）
 func (s *LocalStorage) BatchDownload(ctx context.Context, filePaths []string) (map[string]io.Reader, error) {
 	hlog.CtxInfof(ctx, "开始批量下载 %d 个本地文件", len(filePaths))
-
-	results := make(map[string]io.Reader)
-
-	for _, filePath := range filePaths {
-		reader, err := s.Download(ctx, filePath)
-		if err != nil {
-			hlog.CtxErrorf(ctx, "本地批量下载失败，文件: %s, 错误: %v", filePath, err)
-			// 关闭已打开的reader
-			for _, r := range results {
-				if closer, ok := r.(io.Closer); ok {
-					closer.Close()
-				}
-			}
-			return nil, err
-		}
-		results[filePath] = reader
-	}
-
-	hlog.CtxInfof(ctx, "成功完成本地批量下载，共 %d 个文件", len(filePaths))
-	return results, nil
+	return BatchDownloadHelper(ctx, s, filePaths)
 }
 
 // BatchDelete 实现批量删除
 func (s *LocalStorage) BatchDelete(ctx context.Context, filePaths []string) error {
 	hlog.CtxInfof(ctx, "开始批量删除 %d 个文件", len(filePaths))
-
-	for _, filePath := range filePaths {
-		if err := s.Delete(ctx, filePath); err != nil {
-			hlog.CtxErrorf(ctx, "批量删除失败，文件: %s, 错误: %v", filePath, err)
-			return err
-		}
-	}
-
-	hlog.CtxInfof(ctx, "成功完成批量删除，共 %d 个文件", len(filePaths))
-	return nil
+	return BatchDeleteHelper(ctx, s, filePaths)
 }

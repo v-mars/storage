@@ -35,6 +35,7 @@ type Storage interface {
 	Rename(ctx context.Context, oldPath string, newPath string) error
 	Move(ctx context.Context, srcPath string, dstPath string) error
 	Copy(ctx context.Context, srcPath string, dstPath string) error
+	Exists(ctx context.Context, filePath string) (bool, error) // 检查文件是否存在
 
 	// 目录操作
 	CreateDir(ctx context.Context, dirPath string) error

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"time"
@@ -11,9 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awscfg "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
-	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/cloudwego/hertz/pkg/common/hlog"
 )
 
@@ -184,7 +183,7 @@ func (s *S3Storage) Rename(ctx context.Context, oldPath string, newPath string) 
 	_, err := s.client.CopyObject(ctx, &s3.CopyObjectInput{
 		Bucket:     aws.String(s.config.Bucket),
 		Key:        aws.String(newFullKey),
-		CopySource: aws.String(fmt.Sprintf("%s/%s", s.config.Bucket, oldFullKey)),
+		CopySource: aws.String(url.PathEscape(s.config.Bucket + "/" + oldFullKey)),
 	})
 	if err != nil {
 		hlog.CtxErrorf(ctx, "S3复制文件失败: %v", err)
@@ -218,7 +217,7 @@ func (s *S3Storage) Copy(ctx context.Context, srcPath string, dstPath string) er
 	_, err := s.client.CopyObject(ctx, &s3.CopyObjectInput{
 		Bucket:     aws.String(s.config.Bucket),
 		Key:        aws.String(dstFullKey),
-		CopySource: aws.String(fmt.Sprintf("%s/%s", s.config.Bucket, srcFullKey)),
+		CopySource: aws.String(url.PathEscape(s.config.Bucket + "/" + srcFullKey)),
 	})
 	if err != nil {
 		hlog.CtxErrorf(ctx, "S3复制文件失败: %v", err)
@@ -227,6 +226,19 @@ func (s *S3Storage) Copy(ctx context.Context, srcPath string, dstPath string) er
 
 	hlog.CtxInfof(ctx, "S3文件复制成功: %s -> %s", srcPath, dstPath)
 	return nil
+}
+
+// Exists 实现检查S3文件是否存在
+func (s *S3Storage) Exists(ctx context.Context, filePath string) (bool, error) {
+	fullKey := filepath.Join(s.config.BaseDir, filePath)
+	_, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(s.config.Bucket),
+		Key:    aws.String(fullKey),
+	})
+	if err != nil {
+		return false, nil
+	}
+	return true, nil
 }
 
 // CreateDir 实现S3目录创建（通过创建以/结尾的对象模拟目录）
@@ -263,7 +275,7 @@ func (s *S3Storage) DeleteDir(ctx context.Context, dirPath string) error {
 	dirPath = ensureOSSDirPath(dirPath)
 	fullKey := filepath.Join(s.config.BaseDir, dirPath)
 
-	// 列出目录下的所有对象并删除
+	// 列出目录下的所有对象并删除（直接使用底层client，避免key重复拼接baseDir）
 	paginator := s3.NewListObjectsV2Paginator(s.client, &s3.ListObjectsV2Input{
 		Bucket: aws.String(s.config.Bucket),
 		Prefix: aws.String(fullKey),
@@ -277,7 +289,12 @@ func (s *S3Storage) DeleteDir(ctx context.Context, dirPath string) error {
 		}
 
 		for _, object := range page.Contents {
-			if err := s.Delete(ctx, *object.Key); err != nil {
+			// 直接调用底层API，object.Key已经是完整路径
+			_, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{
+				Bucket: aws.String(s.config.Bucket),
+				Key:    object.Key,
+			})
+			if err != nil {
 				hlog.CtxErrorf(ctx, "删除S3对象失败: %v", err)
 				return err
 			}
@@ -380,58 +397,17 @@ func (s *S3Storage) UpdateMetadata(ctx context.Context, filePath string, metadat
 // BatchUpload 实现S3批量上传
 func (s *S3Storage) BatchUpload(ctx context.Context, files map[string]io.Reader, opts ...UploadOption) error {
 	hlog.CtxInfof(ctx, "开始批量上传 %d 个文件到S3", len(files))
-
-	for filePath, reader := range files {
-		if err := s.Upload(ctx, filePath, reader, opts...); err != nil {
-			hlog.CtxErrorf(ctx, "批量上传失败，文件: %s, 错误: %v", filePath, err)
-			return err
-		}
-	}
-
-	hlog.CtxInfof(ctx, "成功完成S3批量上传，共 %d 个文件", len(files))
-	return nil
+	return BatchUploadHelper(ctx, s, files, opts...)
 }
 
 // BatchDownload 实现S3批量下载（流式下载）
 func (s *S3Storage) BatchDownload(ctx context.Context, filePaths []string) (map[string]io.Reader, error) {
 	hlog.CtxInfof(ctx, "开始批量下载 %d 个S3文件", len(filePaths))
-
-	results := make(map[string]io.Reader)
-
-	for _, filePath := range filePaths {
-		reader, err := s.Download(ctx, filePath)
-		if err != nil {
-			hlog.CtxErrorf(ctx, "S3批量下载失败，文件: %s, 错误: %v", filePath, err)
-			// 关闭已打开的reader
-			for _, r := range results {
-				if closer, ok := r.(io.Closer); ok {
-					closer.Close()
-				}
-			}
-			return nil, err
-		}
-		results[filePath] = reader
-	}
-
-	hlog.CtxInfof(ctx, "成功完成S3批量下载，共 %d 个文件", len(filePaths))
-	return results, nil
+	return BatchDownloadHelper(ctx, s, filePaths)
 }
 
 // BatchDelete 实现S3批量删除
 func (s *S3Storage) BatchDelete(ctx context.Context, filePaths []string) error {
 	hlog.CtxInfof(ctx, "开始批量删除 %d 个S3文件", len(filePaths))
-
-	for _, filePath := range filePaths {
-		if err := s.Delete(ctx, filePath); err != nil {
-			hlog.CtxErrorf(ctx, "批量删除失败，文件: %s, 错误: %v", filePath, err)
-			return err
-		}
-	}
-
-	hlog.CtxInfof(ctx, "成功完成S3批量删除，共 %d 个文件", len(filePaths))
-	return nil
+	return BatchDeleteHelper(ctx, s, filePaths)
 }
-
-// 确保未使用的导入不会报错
-var _ = types.ObjectIdentifier{}
-var _ = manager.Uploader{}

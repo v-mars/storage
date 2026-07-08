@@ -3,12 +3,13 @@ package storage
 import (
 	"context"
 	"fmt"
-	"github.com/aliyun/aliyun-oss-go-sdk/oss"
-	"github.com/cloudwego/hertz/pkg/common/hlog"
 	"io"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/aliyun/aliyun-oss-go-sdk/oss"
+	"github.com/cloudwego/hertz/pkg/common/hlog"
 )
 
 // OSSStorageConfig OSS 存储配置
@@ -170,6 +171,12 @@ func (s *OSSStorage) Copy(ctx context.Context, srcPath string, dstPath string) e
 	return nil
 }
 
+// Exists 实现检查OSS文件是否存在
+func (s *OSSStorage) Exists(ctx context.Context, filePath string) (bool, error) {
+	fullKey := filepath.Join(s.config.BaseDir, filePath)
+	return s.bucket.IsObjectExist(fullKey)
+}
+
 // CreateDir 在OSS中创建目录（通过创建以/结尾的对象模拟目录）
 func (s *OSSStorage) CreateDir(ctx context.Context, dirPath string) error {
 	hlog.CtxInfof(ctx, "开始在OSS中创建目录: %s", dirPath)
@@ -206,7 +213,7 @@ func (s *OSSStorage) DeleteDir(ctx context.Context, dirPath string) error {
 	dirPath = ensureOSSDirPath(dirPath)
 	fullKey := filepath.Join(s.config.BaseDir, dirPath)
 
-	// 获取目录下的所有对象
+	// 获取目录下的所有对象并删除
 	marker := ""
 
 	for {
@@ -221,18 +228,17 @@ func (s *OSSStorage) DeleteDir(ctx context.Context, dirPath string) error {
 			listOptions = append(listOptions, oss.Marker(marker))
 		}
 
-		// 执行列表操作 - 注意：OSS SDK实际上只返回两个参数
+		// 执行列表操作
 		objectListing, err := s.bucket.ListObjects(listOptions...)
 		if err != nil {
 			hlog.CtxErrorf(ctx, "列出OSS目录内容失败: %v", err)
 			return fmt.Errorf("列出OSS目录内容失败：%v", err)
 		}
 
-		// 删除目录下的所有对象
+		// 删除目录下的所有对象（直接调用底层API，object.Key已经是完整路径）
 		for _, object := range objectListing.Objects {
-			// 增加更严格的对象键检查
 			if strings.HasPrefix(object.Key, fullKey) && !isDirectoryPlaceholder(object.Key, fullKey) {
-				if err = s.Delete(ctx, object.Key); err != nil {
+				if err = s.bucket.DeleteObject(object.Key); err != nil {
 					hlog.CtxErrorf(ctx, "删除OSS对象失败: %v", err)
 					return fmt.Errorf("删除OSS对象失败：%v", err)
 				}
@@ -240,7 +246,7 @@ func (s *OSSStorage) DeleteDir(ctx context.Context, dirPath string) error {
 		}
 
 		// 如果当前批次返回的对象数量少于最大限制，则认为是最后一批
-		if len(objectListing.Objects) < 1000 { // OSS默认最多每次返回1000个对象
+		if len(objectListing.Objects) < 1000 {
 			break
 		}
 
@@ -370,54 +376,17 @@ func (s *OSSStorage) UpdateMetadata(ctx context.Context, filePath string, metada
 // BatchUpload 实现OSS批量上传
 func (s *OSSStorage) BatchUpload(ctx context.Context, files map[string]io.Reader, opts ...UploadOption) error {
 	hlog.CtxInfof(ctx, "开始批量上传 %d 个文件到OSS", len(files))
-
-	for filePath, reader := range files {
-		if err := s.Upload(ctx, filePath, reader, opts...); err != nil {
-			hlog.CtxErrorf(ctx, "批量上传失败，文件: %s, 错误: %v", filePath, err)
-			return err
-		}
-	}
-
-	hlog.CtxInfof(ctx, "成功完成OSS批量上传，共 %d 个文件", len(files))
-	return nil
+	return BatchUploadHelper(ctx, s, files, opts...)
 }
 
 // BatchDownload 实现OSS批量下载（流式下载）
 func (s *OSSStorage) BatchDownload(ctx context.Context, filePaths []string) (map[string]io.Reader, error) {
 	hlog.CtxInfof(ctx, "开始批量下载 %d 个OSS文件", len(filePaths))
-
-	results := make(map[string]io.Reader)
-
-	for _, filePath := range filePaths {
-		reader, err := s.Download(ctx, filePath)
-		if err != nil {
-			hlog.CtxErrorf(ctx, "OSS批量下载失败，文件: %s, 错误: %v", filePath, err)
-			// 关闭已打开的reader
-			for _, r := range results {
-				if closer, ok := r.(io.Closer); ok {
-					closer.Close()
-				}
-			}
-			return nil, err
-		}
-		results[filePath] = reader
-	}
-
-	hlog.CtxInfof(ctx, "成功完成OSS批量下载，共 %d 个文件", len(filePaths))
-	return results, nil
+	return BatchDownloadHelper(ctx, s, filePaths)
 }
 
 // BatchDelete 实现OSS批量删除
 func (s *OSSStorage) BatchDelete(ctx context.Context, filePaths []string) error {
 	hlog.CtxInfof(ctx, "开始批量删除 %d 个OSS文件", len(filePaths))
-
-	for _, filePath := range filePaths {
-		if err := s.Delete(ctx, filePath); err != nil {
-			hlog.CtxErrorf(ctx, "批量删除失败，文件: %s, 错误: %v", filePath, err)
-			return err
-		}
-	}
-
-	hlog.CtxInfof(ctx, "成功完成OSS批量删除，共 %d 个文件", len(filePaths))
-	return nil
+	return BatchDeleteHelper(ctx, s, filePaths)
 }

@@ -4,15 +4,15 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"github.com/v-mars/storage"
 	"io"
 	"os"
 	"path/filepath"
-	_ "strings"
+
+	"github.com/v-mars/storage"
 )
 
 var (
-	storageType = flag.String("type", "local", "Storage type: local, oss, minio")
+	storageType = flag.String("type", "local", "Storage type: local, oss, minio, s3")
 	action      = flag.String("action", "", "Action to perform: upload, download, delete, list, mkdir, rmdir")
 	src         = flag.String("src", "", "Source file path")
 	dst         = flag.String("dst", "", "Destination file path")
@@ -36,6 +36,15 @@ var (
 	minioUseSSL          = flag.Bool("minio.usessl", false, "MinIO use SSL")
 	minioBucket          = flag.String("minio.bucket", "", "MinIO bucket name")
 	minioBaseDir         = flag.String("minio.basedir", "", "MinIO base directory")
+
+	// S3 storage options
+	s3Endpoint        = flag.String("s3.endpoint", "", "S3 endpoint")
+	s3AccessKeyID     = flag.String("s3.accesskeyid", "", "S3 access key ID")
+	s3AccessKeySecret = flag.String("s3.accesskeysecret", "", "S3 access key secret")
+	s3Region          = flag.String("s3.region", "us-east-1", "S3 region")
+	s3UseSSL          = flag.Bool("s3.usessl", true, "S3 use SSL")
+	s3Bucket          = flag.String("s3.bucket", "", "S3 bucket name")
+	s3BaseDir         = flag.String("s3.basedir", "", "S3 base directory")
 )
 
 func main() {
@@ -72,6 +81,16 @@ func main() {
 			UseSSL:          *minioUseSSL,
 			Bucket:          *minioBucket,
 			BaseDir:         *minioBaseDir,
+		}
+	case storage.S3:
+		storageConfig.S3 = storage.S3StorageConfig{
+			Endpoint:        *s3Endpoint,
+			AccessKeyID:     *s3AccessKeyID,
+			AccessKeySecret: *s3AccessKeySecret,
+			Region:          *s3Region,
+			UseSSL:          *s3UseSSL,
+			Bucket:          *s3Bucket,
+			BaseDir:         *s3BaseDir,
 		}
 	default:
 		storageConfig.Local = storage.LocalStorageConfig{
