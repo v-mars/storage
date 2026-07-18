@@ -226,27 +226,11 @@ func (s *MinIOStorage) Exists(ctx context.Context, filePath string) (bool, error
 	return true, nil
 }
 
-// CreateDir 实现MinIO目录创建（通过创建以/结尾的对象模拟目录）
+// CreateDir 实现MinIO目录创建。
+// 对象存储中目录是隐式的，PutObject 会自动创建 key 层级，无需显式创建占位对象，
+// 因此直接返回成功。这也避免了零字节对象在 MinIO 浏览器中显示为文件的问题。
 func (s *MinIOStorage) CreateDir(ctx context.Context, dirPath string) error {
-	hlog.CtxInfof(ctx, "开始在MinIO中创建目录: %s", dirPath)
-
-	dirPath = ensureOSSDirPath(dirPath)
-	fullKey := filepath.Join(s.config.BaseDir, dirPath)
-
-	// 检查目录是否已存在
-	_, err := s.client.StatObject(ctx, s.config.Bucket, fullKey, minio.StatObjectOptions{})
-	if err == nil {
-		hlog.CtxDebugf(ctx, "MinIO目录已存在，无需创建: %s", fullKey)
-		return nil
-	}
-
-	// 创建空对象作为目录占位符
-	if err = s.Upload(ctx, dirPath, strings.NewReader("")); err != nil {
-		hlog.CtxErrorf(ctx, "MinIO创建目录占位符失败: %v", err)
-		return err
-	}
-
-	hlog.CtxInfof(ctx, "MinIO目录创建成功: %s", fullKey)
+	hlog.CtxDebugf(ctx, "MinIO 目录无需显式创建: %s", dirPath)
 	return nil
 }
 
@@ -255,7 +239,7 @@ func (s *MinIOStorage) DeleteDir(ctx context.Context, dirPath string) error {
 	hlog.CtxInfof(ctx, "开始从MinIO中删除目录及其所有内容: %s", dirPath)
 
 	dirPath = ensureOSSDirPath(dirPath)
-	fullKey := filepath.Join(s.config.BaseDir, dirPath)
+	fullKey := joinStorageKey(s.config.BaseDir, dirPath)
 
 	// 列出目录下的所有对象并删除（直接使用底层client，避免key重复拼接baseDir）
 	for object := range s.client.ListObjects(ctx, s.config.Bucket, minio.ListObjectsOptions{Prefix: fullKey, Recursive: true}) {
@@ -279,8 +263,10 @@ func (s *MinIOStorage) DeleteDir(ctx context.Context, dirPath string) error {
 func (s *MinIOStorage) ListDir(ctx context.Context, dirPath string) ([]FileMetadata, error) {
 	hlog.CtxInfof(ctx, "开始列出MinIO目录内容: %s", dirPath)
 
+	// 必须保证 prefix 以 / 结尾；否则 Delimiter 分组会把当前目录自身也作为 CommonPrefix 返回，
+	// 导致调用方把 "/" 误判为子目录而无限递归。
 	dirPath = ensureOSSDirPath(dirPath)
-	fullKey := filepath.Join(s.config.BaseDir, dirPath)
+	fullKey := joinStorageKey(s.config.BaseDir, dirPath)
 
 	var fileMetas []FileMetadata
 
@@ -291,12 +277,18 @@ func (s *MinIOStorage) ListDir(ctx context.Context, dirPath string) ([]FileMetad
 			return nil, object.Err
 		}
 
+		// 去除目录前缀，跳过当前目录自身（空名）
+		name := object.Key[len(fullKey):]
+		if name == "" {
+			continue
+		}
+
 		// 转换对象信息为FileMeta
 		fileMeta := FileMetadata{
-			Name:     object.Key[len(fullKey):], // 去除目录前缀
+			Name:     name,
 			Size:     object.Size,
 			ModTime:  object.LastModified,
-			IsDir:    object.Key[len(object.Key)-1] == '/',
+			IsDir:    strings.HasSuffix(name, "/"),
 			MIMEType: "application/octet-stream",
 		}
 		fileMetas = append(fileMetas, fileMeta)

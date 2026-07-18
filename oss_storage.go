@@ -177,32 +177,10 @@ func (s *OSSStorage) Exists(ctx context.Context, filePath string) (bool, error) 
 	return s.bucket.IsObjectExist(fullKey)
 }
 
-// CreateDir 在OSS中创建目录（通过创建以/结尾的对象模拟目录）
+// CreateDir 在OSS中创建目录。
+// 对象存储中目录是隐式的，无需显式创建占位对象。
 func (s *OSSStorage) CreateDir(ctx context.Context, dirPath string) error {
-	hlog.CtxInfof(ctx, "开始在OSS中创建目录: %s", dirPath)
-
-	dirPath = ensureOSSDirPath(dirPath)
-	fullKey := filepath.Join(s.config.BaseDir, dirPath)
-
-	// 检查目录是否已存在
-	exist, err := s.bucket.IsObjectExist(fullKey)
-	if err != nil {
-		hlog.CtxErrorf(ctx, "检查OSS目录是否存在失败: %v", err)
-		return err
-	}
-
-	if exist {
-		hlog.CtxDebugf(ctx, "OSS目录已存在，无需创建: %s", fullKey)
-		return nil
-	}
-
-	// 创建空对象作为目录占位符
-	if err = s.bucket.PutObject(fullKey, strings.NewReader("")); err != nil {
-		hlog.CtxErrorf(ctx, "创建OSS目录占位符失败: %v", err)
-		return err
-	}
-
-	hlog.CtxInfof(ctx, "OSS目录创建成功: %s", fullKey)
+	hlog.CtxDebugf(ctx, "OSS 目录无需显式创建: %s", dirPath)
 	return nil
 }
 
@@ -211,7 +189,7 @@ func (s *OSSStorage) DeleteDir(ctx context.Context, dirPath string) error {
 	hlog.CtxInfof(ctx, "开始从OSS中删除目录及其所有内容: %s", dirPath)
 
 	dirPath = ensureOSSDirPath(dirPath)
-	fullKey := filepath.Join(s.config.BaseDir, dirPath)
+	fullKey := joinStorageKey(s.config.BaseDir, dirPath)
 
 	// 获取目录下的所有对象并删除
 	marker := ""
@@ -258,12 +236,15 @@ func (s *OSSStorage) DeleteDir(ctx context.Context, dirPath string) error {
 	return nil
 }
 
-// ListDir 列出OSS目录内容
+// ListDir 列出OSS目录内容。
+// OSS 默认 ListObjects 不带 Delimiter，会递归返回当前目录下所有对象，
+// 调用方（如 FileManager.walkDir）需自行处理层级关系。
 func (s *OSSStorage) ListDir(ctx context.Context, dirPath string) ([]FileMetadata, error) {
 	hlog.CtxInfof(ctx, "开始列出OSS目录内容: %s", dirPath)
 
+	// 必须保证 prefix 以 / 结尾，避免把 story-script-demo-other 等相似前缀也匹配进来。
 	dirPath = ensureOSSDirPath(dirPath)
-	fullKey := filepath.Join(s.config.BaseDir, dirPath)
+	fullKey := joinStorageKey(s.config.BaseDir, dirPath)
 
 	var fileMetas []FileMetadata
 	var marker string
@@ -291,8 +272,12 @@ func (s *OSSStorage) ListDir(ctx context.Context, dirPath string) ([]FileMetadat
 		for _, object := range objectListing.Objects {
 			// 确保对象在目标目录下
 			if strings.HasPrefix(object.Key, fullKey) && !isDirectoryPlaceholder(object.Key, fullKey) {
+				name := object.Key[len(fullKey):]
+				if name == "" {
+					continue
+				}
 				fileMeta := FileMetadata{
-					Name:     object.Key[len(fullKey):], // 去除目录前缀
+					Name:     name,
 					Size:     object.Size,
 					ModTime:  object.LastModified,
 					IsDir:    false,

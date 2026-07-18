@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"strings"
 
 	"github.com/cloudwego/hertz/pkg/common/hlog"
 )
@@ -220,4 +221,16 @@ func ensureOSSDirPath(path string) string {
 func isDirectoryPlaceholder(key, dirPath string) bool {
 	// 目录占位符通常只有一个斜杠结尾
 	return key == dirPath || key == dirPath+"/"
+}
+
+// joinStorageKey 拼接存储基础路径与相对路径，保留相对路径的尾斜杠。
+// 对象存储的 key 使用正斜杠，且目录列表需要 prefix 以 / 结尾才能正确分组，
+// 因此不能用 filepath.Join（会剥掉尾斜杠）。
+func joinStorageKey(baseDir, relPath string) string {
+	baseDir = strings.TrimSuffix(baseDir, "/")
+	relPath = strings.TrimPrefix(relPath, "/")
+	if baseDir == "" {
+		return relPath
+	}
+	return baseDir + "/" + relPath
 }

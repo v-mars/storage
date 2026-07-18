@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/url"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -241,30 +240,10 @@ func (s *S3Storage) Exists(ctx context.Context, filePath string) (bool, error) {
 	return true, nil
 }
 
-// CreateDir 实现S3目录创建（通过创建以/结尾的对象模拟目录）
+// CreateDir 实现S3目录创建。
+// 对象存储中目录是隐式的，无需显式创建占位对象。
 func (s *S3Storage) CreateDir(ctx context.Context, dirPath string) error {
-	hlog.CtxInfof(ctx, "开始在S3中创建目录: %s", dirPath)
-
-	dirPath = ensureOSSDirPath(dirPath)
-	fullKey := filepath.Join(s.config.BaseDir, dirPath)
-
-	// 检查目录是否已存在
-	_, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{
-		Bucket: aws.String(s.config.Bucket),
-		Key:    aws.String(fullKey),
-	})
-	if err == nil {
-		hlog.CtxDebugf(ctx, "S3目录已存在，无需创建: %s", fullKey)
-		return nil
-	}
-
-	// 创建空对象作为目录占位符
-	if err = s.Upload(ctx, dirPath, strings.NewReader("")); err != nil {
-		hlog.CtxErrorf(ctx, "S3创建目录占位符失败: %v", err)
-		return err
-	}
-
-	hlog.CtxInfof(ctx, "S3目录创建成功: %s", fullKey)
+	hlog.CtxDebugf(ctx, "S3 目录无需显式创建: %s", dirPath)
 	return nil
 }
 
@@ -273,7 +252,7 @@ func (s *S3Storage) DeleteDir(ctx context.Context, dirPath string) error {
 	hlog.CtxInfof(ctx, "开始从S3中删除目录及其所有内容: %s", dirPath)
 
 	dirPath = ensureOSSDirPath(dirPath)
-	fullKey := filepath.Join(s.config.BaseDir, dirPath)
+	fullKey := joinStorageKey(s.config.BaseDir, dirPath)
 
 	// 列出目录下的所有对象并删除（直接使用底层client，避免key重复拼接baseDir）
 	paginator := s3.NewListObjectsV2Paginator(s.client, &s3.ListObjectsV2Input{
@@ -309,8 +288,9 @@ func (s *S3Storage) DeleteDir(ctx context.Context, dirPath string) error {
 func (s *S3Storage) ListDir(ctx context.Context, dirPath string) ([]FileMetadata, error) {
 	hlog.CtxInfof(ctx, "开始列出S3目录内容: %s", dirPath)
 
+	// 必须保证 prefix 以 / 结尾，否则 Delimiter 分组会把当前目录自身也作为 CommonPrefix 返回。
 	dirPath = ensureOSSDirPath(dirPath)
-	fullKey := filepath.Join(s.config.BaseDir, dirPath)
+	fullKey := joinStorageKey(s.config.BaseDir, dirPath)
 
 	var fileMetas []FileMetadata
 
@@ -330,8 +310,12 @@ func (s *S3Storage) ListDir(ctx context.Context, dirPath string) ([]FileMetadata
 
 		// 处理普通对象
 		for _, object := range page.Contents {
+			name := (*object.Key)[len(fullKey):]
+			if name == "" {
+				continue
+			}
 			fileMeta := FileMetadata{
-				Name:     (*object.Key)[len(fullKey):], // 去除目录前缀
+				Name:     name,
 				Size:     *object.Size,
 				ModTime:  *object.LastModified,
 				IsDir:    false,
@@ -343,6 +327,9 @@ func (s *S3Storage) ListDir(ctx context.Context, dirPath string) ([]FileMetadata
 		// 处理子目录（CommonPrefixes）
 		for _, prefix := range page.CommonPrefixes {
 			prefixName := (*prefix.Prefix)[len(fullKey):]
+			if prefixName == "" {
+				continue
+			}
 			fileMeta := FileMetadata{
 				Name:     prefixName,
 				Size:     0,
